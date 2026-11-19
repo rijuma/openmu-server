@@ -21,12 +21,15 @@ public sealed class DroppedMoney : AsyncDisposable, ILocateable
 
     private readonly IReadOnlyList<MoneyShare> _shares;
 
+    private readonly object _removeTimerLock = new();
+
     private Timer? _removeTimer;
 
     private bool _availableToPick = true;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DroppedMoney" /> class.
+    /// The remove timer starts when <see cref="GameMap.AddAsync"/> adds the money, so money which is never added never expires.
     /// </summary>
     /// <param name="amount">The amount.</param>
     /// <param name="position">The position where the item was dropped on the map.</param>
@@ -42,7 +45,6 @@ public sealed class DroppedMoney : AsyncDisposable, ILocateable
         this._pickupLock = new();
         this.Position = position;
         this.CurrentMap = map;
-        this._removeTimer = new Timer(this.OnTimerTimeout, null, (int)map.ItemDropDuration.TotalMilliseconds, Timeout.Infinite);
     }
 
     /// <summary>
@@ -109,21 +111,49 @@ public sealed class DroppedMoney : AsyncDisposable, ILocateable
         return $"Money: {this.Amount} at {this.CurrentMap.Definition.Name} ({this.Position})";
     }
 
+    /// <summary>
+    /// Starts the timer which removes the money from the map after the <see cref="GameMap.ItemDropDuration"/>.
+    /// Called by <see cref="GameMap.AddAsync"/>; does nothing when the timer already runs or the money is disposed.
+    /// </summary>
+    internal void StartRemoveTimer()
+    {
+        lock (this._removeTimerLock)
+        {
+            if (this._removeTimer is not null || this.IsDisposed || this.IsDisposing)
+            {
+                return;
+            }
+
+            this._removeTimer = new Timer(this.OnTimerTimeout, null, (int)this.CurrentMap.ItemDropDuration.TotalMilliseconds, Timeout.Infinite);
+        }
+    }
+
     /// <inheritdoc />
     protected override async ValueTask DisposeAsyncCore()
     {
-        if (this._removeTimer is { } timer)
+        Timer? timer;
+        lock (this._removeTimerLock)
         {
-            try
+            timer = this._removeTimer;
+            this._removeTimer = null;
+        }
+
+        try
+        {
+            if (timer is not null)
             {
-                this._removeTimer = null;
                 await timer.DisposeAsync().ConfigureAwait(false);
+            }
+
+            // Money which was never added to the map has the id 0, which may belong to another drop.
+            if (this.CurrentMap.GetDrop(this.Id) == this)
+            {
                 await this.CurrentMap.RemoveAsync(this).ConfigureAwait(false);
             }
-            catch (Exception e)
-            {
-                Debug.Fail(e.Message, e.StackTrace);
-            }
+        }
+        catch (Exception e)
+        {
+            Debug.Fail(e.Message, e.StackTrace);
         }
 
         await base.DisposeAsyncCore().ConfigureAwait(false);

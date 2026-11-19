@@ -197,6 +197,56 @@ public class GameMapTest
         registration.Verify(r => r.Dispose(), Times.Once);
     }
 
+    /// <summary>
+    /// Tests that removing the drop with id 0, the first drop id of a map, gives the id back and raises
+    /// <see cref="GameMap.ObjectRemoved"/>, like for any other drop.
+    /// </summary>
+    [Test]
+    public async ValueTask RemovingTheDropWithIdZeroGivesItsIdBackAndRaisesObjectRemovedAsync()
+    {
+        var map = new GameMap(new GameMapDefinition(), TimeSpan.FromSeconds(60), ChunkSize);
+        var drop = new DroppedMoney(1000, new Point(100, 100), map);
+        await map.AddAsync(drop).ConfigureAwait(false);
+        Assert.That(drop.Id, Is.EqualTo(0), "test setup: the first drop of a map must get id 0");
+        var removed = new List<ILocateable>();
+        map.ObjectRemoved += args =>
+        {
+            removed.Add(args.Object);
+            return ValueTask.CompletedTask;
+        };
+
+        await map.RemoveAsync(drop).ConfigureAwait(false);
+
+        Assert.That(removed, Is.EqualTo(new[] { drop }));
+        var nextDrop = new DroppedMoney(1000, new Point(100, 100), map);
+        await map.AddAsync(nextDrop).ConfigureAwait(false);
+        Assert.That(nextDrop.Id, Is.EqualTo(0));
+    }
+
+    /// <summary>
+    /// Tests that removing an object which is not on the map, but has the id 0, keeps the drop which is stored under id 0.
+    /// </summary>
+    [Test]
+    public async ValueTask RemovingAnObjectWhichIsNotOnTheMapKeepsTheDropWithIdZeroAsync()
+    {
+        var map = new GameMap(new GameMapDefinition(), TimeSpan.FromSeconds(60), ChunkSize);
+        var drop = new DroppedMoney(1000, new Point(100, 100), map);
+        await map.AddAsync(drop).ConfigureAwait(false);
+        var removedRaised = false;
+        map.ObjectRemoved += _ =>
+        {
+            removedRaised = true;
+            return ValueTask.CompletedTask;
+        };
+        var neverAdded = this.GetPlayer();
+        Assert.That(neverAdded.Object.Id, Is.EqualTo(0), "test setup: the object must have the id of the drop");
+
+        await map.RemoveAsync(neverAdded.Object).ConfigureAwait(false);
+
+        Assert.That(map.GetDrop(0), Is.SameAs(drop));
+        Assert.That(removedRaised, Is.False);
+    }
+
     private Mock<ITestPlayer> GetPlayer()
     {
         var player = new Mock<ITestPlayer>();

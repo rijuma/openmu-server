@@ -175,12 +175,15 @@ public class GameMap
 
     /// <summary>
     /// Removes the locateable from the map.
+    /// It always leaves the area of interest; the id is given back and <see cref="ObjectRemoved"/> is raised
+    /// only when the map held this same instance under its id, so removing an object which is not on the map
+    /// leaves another object with the same id in place.
     /// </summary>
     /// <param name="locateable">The locateable.</param>
     public async ValueTask RemoveAsync(ILocateable locateable)
     {
         await this._areaOfInterestManager.RemoveObjectAsync(locateable).ConfigureAwait(false);
-        if (this._objectsInMap.Remove(locateable.Id) && locateable.Id != 0)
+        if (this._objectsInMap.Remove(new KeyValuePair<ushort, ILocateable>(locateable.Id, locateable)))
         {
             if (locateable is DroppedItem
                 || locateable is DroppedMoney)

@@ -30,6 +30,8 @@ public sealed class DroppedItem : AsyncDisposable, ILocateable
     /// </summary>
     private readonly bool _wasItemPersisted;
 
+    private readonly object _removeTimerLock = new();
+
     private Player? _dropper;
 
     private IEnumerable<object>? _owners;
@@ -52,6 +54,7 @@ public sealed class DroppedItem : AsyncDisposable, ILocateable
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DroppedItem" /> class.
+    /// The remove timer starts when <see cref="GameMap.AddAsync"/> adds the item, so an item which is never added never expires.
     /// </summary>
     /// <param name="item">The item, which should be detached from any player persistence context.</param>
     /// <param name="position">The position where the item was dropped on the map.</param>
@@ -67,7 +70,6 @@ public sealed class DroppedItem : AsyncDisposable, ILocateable
         this._dropper = dropper;
         this._owners = owners;
         this._wasItemPersisted = wasItemPersisted;
-        this._removeTimer = new Timer(this.OnRemoveTimerElapsed, null, (int)map.ItemDropDuration.TotalMilliseconds, Timeout.Infinite);
     }
 
     /// <summary>
@@ -176,19 +178,46 @@ public sealed class DroppedItem : AsyncDisposable, ILocateable
         return $"{this.Id}: {this.Item} at {this.CurrentMap.Definition.Name} ({this.Position})";
     }
 
+    /// <summary>
+    /// Starts the timer which removes the item from the map after the <see cref="GameMap.ItemDropDuration"/>.
+    /// Called by <see cref="GameMap.AddAsync"/>; does nothing when the timer already runs or the item is disposed.
+    /// </summary>
+    internal void StartRemoveTimer()
+    {
+        lock (this._removeTimerLock)
+        {
+            if (this._removeTimer is not null || this.IsDisposed || this.IsDisposing)
+            {
+                return;
+            }
+
+            this._removeTimer = new Timer(this.OnRemoveTimerElapsed, null, (int)this.CurrentMap.ItemDropDuration.TotalMilliseconds, Timeout.Infinite);
+        }
+    }
+
     /// <inheritdoc/>
     protected override async ValueTask DisposeAsyncCore()
     {
-        var timer = this._removeTimer;
-        if (timer != null)
+        Timer? timer;
+        lock (this._removeTimerLock)
         {
+            timer = this._removeTimer;
             this._removeTimer = null;
-            await timer.DisposeAsync().ConfigureAwait(false);
-            await this.CurrentMap.RemoveAsync(this).ConfigureAwait(false);
-            this._dropper = null;
-            this._owners = null;
         }
 
+        if (timer is not null)
+        {
+            await timer.DisposeAsync().ConfigureAwait(false);
+        }
+
+        // An item which was never added to the map has the id 0, which may belong to another drop.
+        if (this.CurrentMap.GetDrop(this.Id) == this)
+        {
+            await this.CurrentMap.RemoveAsync(this).ConfigureAwait(false);
+        }
+
+        this._dropper = null;
+        this._owners = null;
         await base.DisposeAsyncCore().ConfigureAwait(false);
     }
 

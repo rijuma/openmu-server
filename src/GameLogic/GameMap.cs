@@ -207,6 +207,7 @@ public class GameMap
 
     /// <summary>
     /// Adds the locateable to the map.
+    /// The remove timer of a <see cref="DroppedItem"/> or <see cref="DroppedMoney"/> starts at the end, once the drop is on the map.
     /// </summary>
     /// <param name="locateable">The locateable object.</param>
     public async ValueTask AddAsync(ILocateable locateable)
@@ -243,6 +244,16 @@ public class GameMap
         if (this.ObjectAdded is { } eventHandler)
         {
             await eventHandler((this, locateable)).ConfigureAwait(false);
+        }
+
+        switch (locateable)
+        {
+            case DroppedItem droppedItem:
+                droppedItem.StartRemoveTimer();
+                break;
+            case DroppedMoney droppedMoney:
+                droppedMoney.StartRemoveTimer();
+                break;
         }
     }
 
